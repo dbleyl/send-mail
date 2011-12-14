@@ -93,6 +93,7 @@
   (with-open [socket (Socket. "smtp.gmail.com" 587)
               rdr (reader socket)
               wtr (writer socket)]
+    (.setSoTimeout socket 60000)
     (println (.readLine rdr))
     (ehlo rdr wtr)
     (init-secure-session rdr wtr)
