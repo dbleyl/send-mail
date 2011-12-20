@@ -1,59 +1,69 @@
+;   Copyright (c) Donald Bleyl. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
 (ns send-mail
-  (use clojure.java.io)
-  (use base64)
-  (import java.net.Socket)
-  (import [javax.net.ssl SSLSocketFactory SSLSocket]))
+  ^{:doc "Utility for sending emails through gmail using an existing gmail account."}
+  (:require [clojure.java.io :as io])
+  (:require [base64 :as b64])
+  (:import java.net.Socket)
+  (:import [javax.net.ssl SSLSocketFactory SSLSocket]))
+
+(defn- last-line?
+  "Checks whether the line contains a '-' at the 4th position, indicating there are more lines remaining in the response."
+         [line]
+         (not (= \- (.charAt line 3))))
+
+(defn- read-lines
+  "Reads response lines from the server, using SMTP's 'has-next-line' indicator to terminate. Returns the last line."
+  [rdr]
+  (loop [line (.readLine rdr)]
+    (println line)
+    (if (not (last-line? line))
+      (recur (.readLine rdr)))))
+
+(defn- send-command
+  "Sends a command to the server, adding carriage return/linefeed, flushing, and reading the response."
+  [rdr wtr cmd]
+  (.write wtr cmd)
+  (.write wtr "\r\n")
+  (.flush wtr)
+  (read-lines rdr))
 
 (defn- init-secure-session
   "Send the STARTTLS command to initiate the secure communication session."
   [rdr wtr]
-  (.write wtr "STARTTLS\r\n")
-  (.flush wtr)
-  (.readLine rdr))
+  (send-command rdr wtr "STARTTLS"))
 
 (defn- ehlo
   "Invokes EHLO command, and processes response."
-  [rdr wtr]
-  (.write wtr "EHLO smtp.gmail.com\r\n")
-  (.flush wtr)
-  (loop [line (.readLine rdr)]
-    (println line)
-    (if (= \- (.charAt line 3)) ;TODO extract the 'end-of-file' check for multiline responses. SMTP uses a '-' between code and text to indicate another line.
-      (recur (.readLine rdr)))))
+  [rdr wtr host]
+  (send-command rdr wtr (str "EHLO " host)))
 
 (defn- auth
   "Sends the user string to the server, returns the response string."
   [rdr wtr user passwd]
-  (.write wtr "AUTH LOGIN\r\n")
-  (.flush wtr )
-  (.readLine rdr)
-  (.write wtr (str (encode user) "\r\n"))
-  (.flush wtr)
-  (.readLine rdr)
-  (.write wtr (str (encode passwd) "\r\n"))
-  (.flush wtr )
-  (.readLine rdr))
+  (send-command rdr wtr "AUTH LOGIN")
+  (send-command rdr wtr (b64/encode user))
+  (send-command rdr wtr (b64/encode passwd)))
 
 (defn- add-from
   "Sends the 'MAIL FROM' command; returns the response string."
   [rdr wtr from-address]
-  (.write wtr (str "MAIL FROM:<" from-address ">\r\n"))
-  (.flush wtr)
-  (.readLine rdr))
+  (send-command rdr wtr (str "MAIL FROM:<" from-address ">")))
 
 (defn- add-to
-  "Sends the 'MAIL TO' command; returns the response string."
+  "Sends the 'MAIL TO' command; returns the server response as string."
   [rdr wtr to-address]
-  (.write wtr (str "RCPT TO:<" to-address ">\r\n"))
-  (.flush wtr)
-  (.readLine rdr))
+  (send-command rdr wtr (str "RCPT TO:<" to-address ">")))
 
 (defn- start-message
-  "initiates the message by sending the DATA command; returns a string."
+  "initiates the message by sending the DATA command; returns the server response as a string."
   [rdr wtr]
-  (.write wtr "DATA\r\n") 
-  (.flush wtr)
-  (.readLine rdr))
+  (send-command rdr wtr "DATA"))
 
 (defn- write-message-header
   "takes a reader, writer, from-address, to-address and subject, does not
@@ -72,36 +82,40 @@
 (defn- write-message-body
   "Takes a writer and a message, writes the body, adding the lone '.' to close the message. returns a string that contains response message."
   [rdr wtr message-body]
-  (.write wtr message-body) 
-  (.write wtr "\r\n.\r\n")
-  (.flush wtr)
-  (.readLine rdr))
+  (send-command rdr wtr (str message-body "\r\n.")))
 
 (defn- quit
   "Takes a writer and sends a 'QUIT' command to the server and returns the 
   response line as a string. Sends the message to the server to disconnect,
   but doesn't close the underlying connections."
   [rdr wtr]
-  (.write wtr "QUIT\r\n")
-  (.flush wtr)
-  (.readLine rdr))
+  (send-command rdr wtr "QUIT"))
 
 (defn send-mail
-  "Sends an email using the gmail smtp infrastructure.
-  all parameters are required."
-  [from-address to-address subject message-body user passwd]
-  (with-open [socket (Socket. "smtp.gmail.com" 587)
-              rdr (reader socket)
-              wtr (writer socket)]
-    (.setSoTimeout socket 60000)
+  "Sends an email using the parameters passed, designed to work with gmail.
+  The version that takes host and port has not been tested with other smtp relays
+  and should be considered experimental at best.
+  
+  The email addresses should not be surrounded in <>'s and the user and password will be
+  base64 encoded according to the spec for you.
+  
+  Error-handling is non-existent in this version; it's important to use a reasonable socket-timeout
+  or use the function without the time-out parameter, which will default to 60 seconds.
+  
+  Pipelining, which is advertised by gmail, is not used in this implementation. "
+  ([from-address to-address subject message-body user passwd host port socket-timeout]
+  (with-open [socket (Socket. host port)
+              rdr (io/reader socket)
+              wtr (io/writer socket)]
+    (.setSoTimeout socket socket-timeout)
     (println (.readLine rdr))
-    (ehlo rdr wtr)
+    (ehlo rdr wtr host)
     (init-secure-session rdr wtr)
-    (with-open [secsocket (.createSocket (SSLSocketFactory/getDefault) socket "smtp.gmail.com" 587 false)
-                secreader (reader secsocket)
-                secwriter (writer secsocket)]
+    (with-open [secsocket (.createSocket (SSLSocketFactory/getDefault) socket host port false)
+                secreader (io/reader secsocket)
+                secwriter (io/writer secsocket)]
       (.startHandshake secsocket)
-      (ehlo secreader secwriter)
+      (ehlo secreader secwriter host)
       (auth secreader secwriter user passwd)
       (add-from secreader secwriter from-address)
       (add-to secreader secwriter to-address)
@@ -109,3 +123,9 @@
       (write-message-header secwriter from-address to-address subject)
       (write-message-body secreader secwriter message-body)
       (quit secreader secwriter))))
+  
+  ([from-address to-address subject message-body passwd socket-timeout]
+   (send-mail from-address to-address subject message-body from-address passwd "smtp.gmail.com" 587 socket-timeout))
+
+  ([from-address to-address subject message-body passwd]
+   (send-mail from-address to-address subject message-body from-address passwd "smtp.gmail.com" 587 60000)))
