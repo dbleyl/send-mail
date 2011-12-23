@@ -28,6 +28,7 @@
 (defn- send-command
   "Sends a command to the server, adding carriage return/linefeed, flushing, and reading the response."
   [rdr wtr cmd]
+  (println cmd)
   (.write wtr cmd)
   (.write wtr "\r\n")
   (.flush wtr)
@@ -56,9 +57,17 @@
   (send-command rdr wtr (str "MAIL FROM:<" from-address ">")))
 
 (defn- add-to
-  "Sends the 'MAIL TO' command; returns the server response as string."
+  "Sends the 'RCPT TO' command; returns the server response as string."
   [rdr wtr to-address]
   (send-command rdr wtr (str "RCPT TO:<" to-address ">")))
+
+(defn- add-all-to
+  "Takes a collection of email addresses, sending a 'RCPT TO' command to each, returning a map of the status for each add."
+  [rdr wtr addresses]
+  (loop [addr (first addresses) [i & more] (next addresses)]
+    (add-to rdr wtr addr)
+    (if i
+      (recur i more))))
 
 (defn- start-message
   "initiates the message by sending the DATA command; returns the server response as a string."
@@ -70,7 +79,14 @@
   return a value."
   [wtr from-address to-address subject]
   (.write wtr (str "From: <" from-address ">\r\n"))
-  (.write wtr (str "To: <" to-address ">\r\n"))
+  (if (string? to-address)
+    (.write wtr (str "To: <" to-address ">\r\n"))
+    (do
+      (.write wtr (str "To: <" (first to-address) ">\r\n"))
+      (loop [addr (second to-address) [i & addrs] (next (next to-address))]
+        (.write wtr (str "Cc: <" addr ">\r\n"))
+        (if i
+          (recur i (next addrs))))))
   (.write wtr
           (str "Date: " 
                (.format 
@@ -79,10 +95,15 @@
                "\r\n"))
   (.write wtr (str "Subject: " subject "\r\n")))
 
+(defn- escape-msg
+  "Replaces the message body termination indicator '\r\n.\r\n' with '\r\n..\r\n' according to the smtp spec."
+  [s]
+  (.replaceAll s "\r\n.\r\n" "\r\n..\r\n"))
+
 (defn- write-message-body
   "Takes a writer and a message, writes the body, adding the lone '.' to close the message. returns a string that contains response message."
   [rdr wtr message-body]
-  (send-command rdr wtr (str message-body "\r\n.")))
+  (send-command rdr wtr (str (escape-msg message-body) "\r\n.")))
 
 (defn- quit
   "Takes a writer and sends a 'QUIT' command to the server and returns the 
@@ -118,7 +139,9 @@
       (ehlo secreader secwriter host)
       (auth secreader secwriter user passwd)
       (add-from secreader secwriter from-address)
-      (add-to secreader secwriter to-address)
+      (if (string? to-address)
+        (add-to secreader secwriter to-address)
+        (add-all-to secreader secwriter to-address))
       (start-message secreader secwriter)
       (write-message-header secwriter from-address to-address subject)
       (write-message-body secreader secwriter message-body)
