@@ -1,3 +1,6 @@
 ~*.*
 *.sw*
 nailgun-server.sh
+*.jar
+*.class
+pom.xml
