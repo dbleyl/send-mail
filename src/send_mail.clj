@@ -28,7 +28,6 @@
 (defn- send-command
   "Sends a command to the server, adding carriage return/linefeed, flushing, and reading the response."
   [rdr wtr cmd]
-  (println cmd)
   (.write wtr cmd)
   (.write wtr "\r\n")
   (.flush wtr)
