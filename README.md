@@ -4,7 +4,7 @@ Welcome to the send-mail Clojure library wiki.
 
 ## Introduction
 
-send-mail is a simple Clojure library for sending emails, and is licensed under the [Eclipse Public License](https://github.com/dbleyl/send-mail/blob/master/epl-v10.html).  The original use case was for sending emails from a noir web app hosted on Heroku. Inspired by [this tutorial on Heroku](http://blog.heroku.com/archives/2009/11/9/tech_sending_email_with_gmail/) for sending mail from rails apps, and the referenced article on sending email using gmail.
+send-mail is a simple Clojure library for sending emails, written in pure Clojure, and licensed under the [Eclipse Public License](https://github.com/dbleyl/send-mail/blob/master/epl-v10.html).  The original use case was for sending emails from a noir web app hosted on Heroku. Inspired by [this tutorial on Heroku](http://blog.heroku.com/archives/2009/11/9/tech_sending_email_with_gmail/) for sending mail from rails apps, and the referenced article on sending email using gmail.
 
 ## Features
 
